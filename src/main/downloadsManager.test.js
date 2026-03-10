@@ -4,7 +4,6 @@ import fs from 'fs';
 import path from 'path';
 
 import {shell} from 'electron';
-import {getDoNotDisturb as getDarwinDoNotDisturb} from 'macos-notification-state';
 
 import Config from 'common/config';
 import {APP_UPDATE_KEY} from 'common/constants';
@@ -74,9 +73,6 @@ jest.mock('fs', () => ({
     existsSync: jest.fn().mockReturnValue(false),
     readFileSync: jest.fn().mockImplementation((text) => text),
     writeFile: jest.fn(),
-}));
-jest.mock('macos-notification-state', () => ({
-    getDoNotDisturb: jest.fn(),
 }));
 jest.mock('main/notifications', () => ({}));
 jest.mock('main/windows/mainWindow', () => ({

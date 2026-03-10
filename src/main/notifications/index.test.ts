@@ -6,7 +6,6 @@ import notMockedCP from 'child_process';
 
 import type {BrowserWindow, IpcMain, IpcMainEvent, WebContents} from 'electron';
 import {Notification as NotMockedNotification, shell, app, ipcMain as NotMockedIpcMain} from 'electron';
-import {getDoNotDisturb as notMockedGetDarwinDoNotDisturb} from 'macos-notification-state';
 import {getFocusAssist as notMockedGetFocusAssist} from 'windows-focus-assist';
 
 import {PLAY_SOUND} from 'common/communication';
@@ -85,9 +84,6 @@ jest.mock('windows-focus-assist', () => ({
     getFocusAssist: jest.fn(),
 }));
 
-jest.mock('macos-notification-state', () => ({
-    getDoNotDisturb: jest.fn(),
-}));
 jest.mock('../views/viewManager', () => ({
     getViewByWebContentsId: () => ({
         id: 'server_id',

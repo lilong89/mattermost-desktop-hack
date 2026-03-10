@@ -3,8 +3,6 @@
 
 'use strict';
 
-import {getDoNotDisturb as getDarwinDoNotDisturb} from 'macos-notification-state';
-
 import ServerViewState from 'app/serverViewState';
 import ServerManager from 'common/servers/serverManager';
 import {localizeMessage} from 'main/i18nManager';
@@ -57,9 +55,6 @@ jest.mock('fs', () => ({
     existsSync: jest.fn().mockReturnValue(false),
     readFileSync: jest.fn().mockImplementation((text) => text),
     writeFile: jest.fn(),
-}));
-jest.mock('macos-notification-state', () => ({
-    getDoNotDisturb: jest.fn(),
 }));
 jest.mock('main/i18nManager', () => ({
     localizeMessage: jest.fn(),
@@ -134,7 +129,6 @@ describe('main/menus/app', () => {
         ServerViewState.getCurrentServer.mockReturnValue(servers[0]);
         ServerManager.getOrderedServers.mockReturnValue(servers);
         ServerManager.getOrderedTabsForServer.mockReturnValue(views);
-        getDarwinDoNotDisturb.mockReturnValue(false);
     });
 
     describe('mac only', () => {

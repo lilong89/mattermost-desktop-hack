@@ -3,8 +3,6 @@
 
 'use strict';
 
-import {getDoNotDisturb as getDarwinDoNotDisturb} from 'macos-notification-state';
-
 import {DOWNLOADS_DROPDOWN_FULL_WIDTH, DOWNLOADS_DROPDOWN_HEIGHT, TAB_BAR_HEIGHT} from 'common/utils/constants';
 import MainWindow from 'main/windows/mainWindow';
 
@@ -17,9 +15,6 @@ jest.mock('fs', () => ({
     existsSync: jest.fn().mockReturnValue(false),
     readFileSync: jest.fn().mockImplementation((text) => text),
     writeFile: jest.fn(),
-}));
-jest.mock('macos-notification-state', () => ({
-    getDoNotDisturb: jest.fn(),
 }));
 jest.mock('electron', () => {
     class NotificationMock {
