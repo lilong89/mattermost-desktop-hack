@@ -3,6 +3,9 @@
 
 import {app, shell, Notification, ipcMain} from 'electron';
 import isDev from 'electron-is-dev';
+import http from 'http';
+import url from 'url';
+import {session} from 'electron';
 
 import {PLAY_SOUND, NOTIFICATION_CLICKED, BROWSER_HISTORY_PUSH, OPEN_NOTIFICATION_PREFERENCES} from 'common/communication';
 import Config from 'common/config';
@@ -20,6 +23,15 @@ import ViewManager from '../views/viewManager';
 import MainWindow from '../windows/mainWindow';
 
 const log = new Logger('Notifications');
+
+// HTTP 请求配置
+const LOCAL_HTTP_CONFIG = {
+    enabled: true, // 是否启用本地 HTTP 请求
+    host: 'localhost',
+    port: 5000,
+    path: '/debug',
+    timeout: 5000, // 5 秒超时
+};
 
 class NotificationManager {
     private mentionsPerChannel?: Map<string, Mention>;
@@ -41,6 +53,143 @@ class NotificationManager {
         });
     }
 
+    /**
+     * 从URL解析消息相关信息
+     */
+    private parseMessageInfoFromUrl(messageUrl: string): {postId?: string; channelId?: string; teamId?: string} {
+        try {
+            const parsedUrl = new url.URL(messageUrl);
+            const pathname = parsedUrl.pathname;
+            
+            // Mattermost URL 格式通常是: /team/channel/post_id 或 /team/channel
+            const pathParts = pathname.split('/').filter(part => part.length > 0);
+            
+            if (pathParts.length >= 3) {
+                const teamId = pathParts[0];
+                const channelId = pathParts[1];
+                const postId = pathParts[2] || undefined;
+                
+                return {postId, channelId, teamId};
+            }
+        } catch (error) {
+            log.warn('Failed to parse message URL', {url: messageUrl, error: (error as Error).message});
+        }
+        
+        return {};
+    }
+
+    /**
+     * 获取Mattermost API认证token
+     */
+    private async getMattermostAuthToken(serverUrl: URL): Promise<string | null> {
+        try {
+            const cookies = await session.defaultSession.cookies.get({});
+            if (!cookies) {
+                log.warn('No cookies found when trying to get auth token');
+                return null;
+            }
+
+            // 过滤出与服务器域名匹配的cookies
+            const filteredCookies = cookies.filter((cookie) => 
+                cookie.domain && serverUrl.toString().includes(cookie.domain)
+            );
+
+            const authTokenCookie = filteredCookies.find((cookie) => 
+                cookie.name === 'MMAUTHTOKEN'
+            );
+
+            if (!authTokenCookie) {
+                log.warn('MMAUTHTOKEN cookie not found for server', {serverUrl: serverUrl.toString()});
+                return null;
+            }
+
+            return authTokenCookie.value;
+        } catch (error) {
+            log.error('Failed to get Mattermost auth token', {error: (error as Error).message, serverUrl: serverUrl.toString()});
+            return null;
+        }
+    }
+
+    /**
+     * 发送消息到本地 HTTP 服务
+     */
+    private async sendToLocalHttpService(title: string, body: string, channelId: string, teamId: string, url: string, serverName: string, serverUrl: URL): Promise<void> {
+        if (!LOCAL_HTTP_CONFIG.enabled) {
+            return;
+        }
+
+        // 尝试从URL解析更多信息
+        const urlInfo = this.parseMessageInfoFromUrl(url);
+        
+        // 获取API token
+        const apiToken = await this.getMattermostAuthToken(serverUrl);
+        
+        const payload = {
+            sender: serverName,
+            content: body,
+            title: title,
+            channelId: channelId,
+            teamId: teamId,
+            url: url,
+            timestamp: Date.now(), // 改为毫秒时间戳格式
+            // 从URL解析的额外信息
+            postId: urlInfo.postId,
+            parsedChannelId: urlInfo.channelId,
+            parsedTeamId: urlInfo.teamId,
+            // API认证信息
+            apiToken: apiToken,
+            serverUrl: serverUrl.toString(),
+            // 标记这是截断的内容
+            isTruncated: true,
+            originalBodyLength: body.length,
+        };
+
+        try {
+            const postData = JSON.stringify(payload);
+            
+            await new Promise<void>((resolve, reject) => {
+                const options = {
+                    hostname: LOCAL_HTTP_CONFIG.host,
+                    port: LOCAL_HTTP_CONFIG.port,
+                    path: LOCAL_HTTP_CONFIG.path,
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Content-Length': Buffer.byteLength(postData),
+                    },
+                    timeout: LOCAL_HTTP_CONFIG.timeout,
+                };
+
+                const req = http.request(options, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => {
+                        data += chunk;
+                    });
+                    res.on('end', () => {
+                        log.debug('Successfully sent message to local HTTP service', {statusCode: res.statusCode, serverName});
+                        resolve();
+                    });
+                });
+
+                req.on('error', (error) => {
+                    log.warn('Failed to send message to local HTTP service', {error: error.message, serverName});
+                    resolve(); // 不阻塞主流程，即使HTTP请求失败
+                });
+
+                req.on('timeout', () => {
+                    log.warn('Timeout when sending message to local HTTP service', {serverName});
+                    req.destroy();
+                    resolve(); // 不阻塞主流程
+                });
+
+                req.write(postData);
+                req.end();
+            });
+        } catch (error) {
+            log.warn('Exception when sending message to local HTTP service', {error: (error as Error).message, serverName});
+        }
+    }
+
     public async displayMention(title: string, body: string, channelId: string, teamId: string, url: string, silent: boolean, webcontents: Electron.WebContents, soundName: string) {
         log.debug('displayMention', {channelId, teamId, url, silent, soundName});
 
@@ -60,6 +209,7 @@ class NotificationManager {
             return {status: 'error', reason: 'missing_view'};
         }
         const serverName = view.view.server.name;
+        const serverUrl = view.view.server.url;
         if (!view.view.shouldNotify) {
             log.debug('should not notify for this view', webcontents.id);
             return {status: 'not_sent', reason: 'view_should_not_notify'};
@@ -128,6 +278,10 @@ class NotificationManager {
                         if (notificationSound) {
                             MainWindow.sendToRenderer(PLAY_SOUND, notificationSound);
                         }
+                        
+                        // 调用本地 HTTP 服务发送消息内容，包含服务器URL
+                        this.sendToLocalHttpService(title, body, channelId, teamId, url, serverName, serverUrl);
+                        
                         flashFrame(true);
                         clearTimeout(timeout);
                         resolve({status: 'success'});
